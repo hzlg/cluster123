@@ -77,8 +77,8 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=["cifar10", "mnist", "femnist"],
-        default="cifar10",
+        choices=["cifar10", "mnist", "famnist"],
+        default="famnist",
     )
     parser.add_argument(
         "--dev_type", type=str, choices=["sign", "std", "unit_vec"], default="std"
@@ -100,16 +100,16 @@ def parse_args():
 
 def init_args():
     args = parse_args()
-    args.num_classes = {"cifar10": 10, "mnist": 10, "femnist": 62}[args.dataset]
-    args.lr = {"cifar10": 0.01, "mnist": 0.001, "femnist": 0.001}[args.dataset]
-    args.optimizer = {"cifar10": "SGD", "mnist": "Adam", "femnist": "Adam"}[
+    args.num_classes = {"cifar10": 10, "mnist": 10, "famnist": 10}[args.dataset]
+    args.lr = {"cifar10": 0.01, "mnist": 0.001, "famnist": 0.001}[args.dataset]
+    args.optimizer = {"cifar10": "SGD", "mnist": "Adam", "famnist": "Adam"}[
         args.dataset
     ]
-    args.epoch = {"cifar10": 1200, "mnist": 500, "femnist": 1500}[args.dataset]
-    args.batchsize = {"cifar10": 64, "mnist": 100, "femnist": 10000}[args.dataset]
-    args.arch = {"cifar10": "resnet18", "mnist": "MLP", "femnist": "CNN"}[args.dataset]
-    args.schedule = {"cifar10": [], "mnist": [], "femnist": [1000]}[args.dataset]
-    args.dev_type = {"cifar10": "std", "mnist": "std", "femnist": "std"}[args.dataset]
+    args.epoch = {"cifar10": 1200, "mnist": 500, "famnist": 500}[args.dataset]
+    args.batchsize = {"cifar10": 64, "mnist": 1000, "famnist": 1000}[args.dataset]
+    args.arch = {"cifar10": "resnet18", "mnist": "MLP", "famnist": "CNN"}[args.dataset]
+    args.schedule = {"cifar10": [], "mnist": [], "famnist": []}[args.dataset]
+    args.dev_type = {"cifar10": "std", "mnist": "std", "famnist": "std"}[args.dataset]
     args.dataloc = args.dataloc + args.dataset + "/"
     if args.agr == "fltrust":
         args.is_server = True
@@ -397,6 +397,127 @@ class mnist_label_dis_skew_data:
             pickle.dump(shuffle_idx, open("./mnist_shuffle.pkl", "wb"))
         else:
             shuffle_idx = pickle.load(open("./mnist_shuffle.pkl", "rb"))
+        X = X[shuffle_idx]
+        Y = Y[shuffle_idx]
+
+        test_labels = Y[:5000]
+        test_data = X[:5000]
+        te_data_tensor = torch.from_numpy(test_data).type(torch.FloatTensor)
+        te_label_tensor = torch.from_numpy(test_labels).type(torch.LongTensor)
+
+        unq, unq_cnt = np.unique(Y[:5000], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
+        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+        print("Data statistics Test:\n \t %s" % str(tmp))
+
+        val_labels = Y[5000:]
+        val_data = X[5000:]
+        va_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
+        va_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
+
+        self.va_data_tensor = va_data_tensor
+        self.va_label_tensor = va_label_tensor
+        self.te_data_tensor = te_data_tensor
+        self.te_label_tensor = te_label_tensor
+        self.user_tr_data_tensors = user_tr_data_tensors
+        self.user_tr_label_tensors = user_tr_label_tensors
+
+
+class famnist_label_dis_skew_data:
+    va_data_tensor = 0
+    va_label_tensor = 0
+    te_data_tensor = 0
+    te_label_tensor = 0
+    user_tr_data_tensors = 0
+    user_tr_label_tensors = 0
+
+    def split_noniid(self, train_idcs, train_labels, alpha, n_clients):
+        n_classes = train_labels.max() + 1  # train_labels内的元素为[0,61],类数为62
+        label_distribution = np.random.dirichlet(
+            [alpha] * n_clients, n_classes
+        )  # (类数K=62,客户端数N=10)，行向量是类K在每个客户端上的概率分布向量
+        class_idcs = [
+            np.argwhere(train_labels[train_idcs] == y).flatten()
+            for y in range(n_classes)
+        ]  # 把10000个数据中的62个类分离出来,得到62个idx组成的ndarray
+        client_idcs = [[] for _ in range(n_clients)]  # （10，62）
+        for c, fracs in zip(
+            class_idcs, label_distribution
+        ):  # c是label为k的样本的idx,fracs是个类k的概率分布向量
+            for i, idcs in enumerate(
+                np.split(c, (np.cumsum(fracs)[:-1] * len(c)).astype(int))
+            ):  # cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...),cumsum*len(c)是类k前n个客户端的数量, idcs是第k个类在第i个客户端李
+                client_idcs[i] += [idcs]  # 把类k的数据的idx(max=10000)分到n个客户端中
+        client_idcs = [
+            train_idcs[np.concatenate(idcs)] for idcs in client_idcs
+        ]  # concatenate:对数列合并，把62个类的训练样本idx(max=10000)合起来,换成所有样本下的idx(max=60000)
+        return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
+
+    def __init__(self, dataloc, alpha, n_client):
+        DIRICHLET_ALPHA = alpha
+        train_transform = transforms.Compose(
+            [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+        )
+        famnist_train = datasets.FashionMNIST(
+            root=dataloc + "data", train=True, download=True, transform=train_transform
+        )
+        X, Y = [], []
+        for i in range(len(famnist_train)):  # 把训练集的50000个样本提取
+            X.append(famnist_train.data[i].numpy())
+            Y.append(famnist_train.targets[i])
+        X, Y = np.array(X), np.array(Y)
+        train_labels = Y
+        train_idx = np.arange(len(train_labels))
+        client_idcs = self.split_noniid(
+            train_idx, train_labels, alpha=DIRICHLET_ALPHA, n_clients=n_client
+        )  # 根据对称狄利克雷参数划分noniid数据
+
+        net_cls_counts = {}
+        for net_i, dataidx in enumerate(client_idcs):
+            unq, unq_cnt = np.unique(
+                Y[dataidx], return_counts=True
+            )  # 去除重复元素，得到类名和该类元素数量
+            tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+            net_cls_counts[net_i] = tmp
+        print("Data statistics Train:\n \t %s" % str(net_cls_counts))
+
+        # 数据分布可视化
+        # plt.figure(figsize=(20, 3))
+        # plt.hist([train_labels[idc] for idc in client_idcs], stacked=True, bins=np.arange(min(train_labels) - 0.5, max(train_labels) + 1.5, 1), label=["Client {}".format(i) for i in range(n_client)])
+        # mapp = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+        # plt.xticks(np.arange(10), mapp)
+        # plt.legend()
+        # plt.show()
+
+        user_tr_data_tensors = []
+        user_tr_label_tensors = []
+        for client_data_idx in client_idcs:
+            user_tr_data_tensors.append(
+                torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
+            )
+            user_tr_label_tensors.append(
+                torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
+            )
+
+        famnist_test = datasets.FashionMNIST(
+            root=dataloc + "data",
+            train=False,
+            download=True,
+            transform=train_transform,
+        )
+        X = []
+        Y = []
+        for i in range(len(famnist_test)):  # 把测试集的10000个样本提取
+            X.append(famnist_test.data[i].numpy())
+            Y.append(famnist_test.targets[i])
+        X = np.array(X)
+        Y = np.array(Y)
+
+        if not os.path.isfile("./famnist_shuffle.pkl"):
+            shuffle_idx = np.arange(len(X))
+            np.random.shuffle(shuffle_idx)
+            pickle.dump(shuffle_idx, open("./famnist_shuffle.pkl", "wb"))
+        else:
+            shuffle_idx = pickle.load(open("./famnist_shuffle.pkl", "rb"))
         X = X[shuffle_idx]
         Y = Y[shuffle_idx]
 
@@ -1032,7 +1153,7 @@ def full_knowledge_attack(args, datatensors):
                 save_epoch_num = 25
             elif args.dataset == "cifar10":
                 save_epoch_num = 10
-            elif args.dataset == "femnist":
+            elif args.dataset == "famnist":
                 save_epoch_num = 10
 
             ####################################
@@ -1144,28 +1265,32 @@ if __name__ == "__main__":
                     "rb",
                 )
             )
-    elif args.dataset == "femnist":
-        if args.alpha == 1:
-            if not os.path.isfile("femnist_tensor_class.pkl"):
-                data_tensors_class = femnist_label_dis_skew_data()
-                pickle.dump(data_tensors_class, open("femnist_tensor_class.pkl", "wb"))
-            else:
-                data_tensors_class = pickle.load(open("femnist_tensor_class.pkl", "rb"))
-        elif args.alpha == 1000:
-            if not os.path.isfile("femnist_iid_tensor_class.pkl"):
-                data_tensors_class = femnist_label_dis_skew_data()
-                pickle.dump(
-                    data_tensors_class, open("femnist_iid_tensor_class.pkl", "wb")
-                )
-            else:
-                data_tensors_class = pickle.load(
-                    open("femnist_iid_tensor_class.pkl", "rb")
-                )
     elif args.dataset == "mnist":
         if not os.path.isfile(
             f"./{args.dataset}_{args.num_clients}_{args.alpha}_dataset.pkl"
         ):
             data_tensors_class = mnist_label_dis_skew_data(
+                args.dataloc, args.alpha, args.num_clients
+            )
+            pickle.dump(
+                data_tensors_class,
+                open(
+                    f"./{args.dataset}_{args.num_clients}_{args.alpha}_dataset.pkl",
+                    "wb",
+                ),
+            )
+        else:
+            data_tensors_class = pickle.load(
+                open(
+                    f"./{args.dataset}_{args.num_clients}_{args.alpha}_dataset.pkl",
+                    "rb",
+                )
+            )
+    elif args.dataset == "famnist":
+        if not os.path.isfile(
+            f"./{args.dataset}_{args.num_clients}_{args.alpha}_dataset.pkl"
+        ):
+            data_tensors_class = famnist_label_dis_skew_data(
                 args.dataloc, args.alpha, args.num_clients
             )
             pickle.dump(
