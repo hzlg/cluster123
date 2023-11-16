@@ -422,208 +422,6 @@ class mnist_label_dis_skew_data:
         self.user_tr_label_tensors = user_tr_label_tensors
 
 
-class femnist_label_dis_skew_data:
-    def __init__(self):
-        user_tr_data = []
-        user_tr_labels = []
-        user_tr_data_tensors = []
-        user_tr_label_tensors = []
-        user_te_data = []
-        user_te_labels = []
-        if not os.path.isfile("./user_tr_data.pkl"):
-            for i in range(36):
-                f = (
-                    "/home/leaf-master/data/femnist/data/train/all_data_%d_niid_0_keep_0_train_9.json"
-                    % i
-                )
-                with open(f, "r") as myfile:
-                    data = myfile.read()
-                obj = json.loads(data)
-                for user in obj["users"]:
-                    user_tr_data.append(obj["user_data"][user]["x"])
-                    user_tr_labels.append(obj["user_data"][user]["y"])
-            pickle.dump(user_tr_data, open("./user_tr_data.pkl", "wb"))
-            pickle.dump(user_tr_labels, open("./user_tr_labels.pkl", "wb"))
-        else:
-            user_tr_data = pickle.load(open("./user_tr_data.pkl", "rb"))
-            user_tr_labels = pickle.load(open("./user_tr_labels.pkl", "rb"))
-
-        if not os.path.isfile("./user_te_data.pkl"):
-            for i in range(36):
-                f = (
-                    "/home/leaf-master/data/femnist/data/test/all_data_%d_niid_0_keep_0_test_9.json"
-                    % i
-                )
-                with open(f, "r") as myfile:
-                    data = myfile.read()
-                obj = json.loads(data)
-                for user in obj["users"]:
-                    user_te_data.append(obj["user_data"][user]["x"])
-                    user_te_labels.append(obj["user_data"][user]["y"])
-            pickle.dump(user_te_data, open("./user_te_data.pkl", "wb"))
-            pickle.dump(user_te_labels, open("./user_te_labels.pkl", "wb"))
-        else:
-            user_te_data = pickle.load(open("./user_te_data.pkl", "rb"))
-            user_te_labels = pickle.load(open("./user_te_labels.pkl", "rb"))
-
-        for i in range(len(user_tr_data)):
-            user_tr_data_tensor = torch.from_numpy(np.array(user_tr_data[i])).type(
-                torch.FloatTensor
-            )
-            user_tr_label_tensor = torch.from_numpy(np.array(user_tr_labels[i])).type(
-                torch.LongTensor
-            )
-
-            user_tr_data_tensors.append(user_tr_data_tensor)
-            user_tr_label_tensors.append(user_tr_label_tensor)
-
-            # print('user %d tr len %d' % (i, len(user_tr_data_tensor)))
-
-        te_data = np.concatenate(user_te_data, 0)
-        te_labels = np.concatenate(user_te_labels)
-        te_len = len(te_labels)
-
-        te_data_tensor = torch.from_numpy(te_data[: (te_len // 2)]).type(
-            torch.FloatTensor
-        )
-        te_label_tensor = torch.from_numpy(te_labels[: (te_len // 2)]).type(
-            torch.LongTensor
-        )
-
-        val_data_tensor = torch.from_numpy(te_data[(te_len // 2) :]).type(
-            torch.FloatTensor
-        )
-        val_label_tensor = torch.from_numpy(te_labels[(te_len // 2) :]).type(
-            torch.LongTensor
-        )
-
-        self.va_data_tensor = val_data_tensor
-        self.va_label_tensor = val_label_tensor
-        self.te_data_tensor = te_data_tensor
-        self.te_label_tensor = te_label_tensor
-        self.user_tr_data_tensors = user_tr_data_tensors
-        self.user_tr_label_tensors = user_tr_label_tensors
-
-
-class fashion_mnist_label_dis_skew_data:
-    va_data_tensor = 0
-    va_label_tensor = 0
-    te_data_tensor = 0
-    te_label_tensor = 0
-    user_tr_data_tensors = 0
-    user_tr_label_tensors = 0
-
-    def split_noniid(self, train_idcs, train_labels, alpha, n_clients):
-        n_classes = train_labels.max() + 1  # train_labels内的元素为[0,61],类数为62
-        label_distribution = np.random.dirichlet(
-            [alpha] * n_clients, n_classes
-        )  # (类数K=62,客户端数N=10)，行向量是类K在每个客户端上的概率分布向量
-        class_idcs = [
-            np.argwhere(train_labels[train_idcs] == y).flatten()
-            for y in range(n_classes)
-        ]  # 把10000个数据中的62个类分离出来,得到62个idx组成的ndarray
-        client_idcs = [[] for _ in range(n_clients)]  # （10，62）
-        for c, fracs in zip(
-            class_idcs, label_distribution
-        ):  # c是label为k的样本的idx,fracs是个类k的概率分布向量
-            for i, idcs in enumerate(
-                np.split(c, (np.cumsum(fracs)[:-1] * len(c)).astype(int))
-            ):  # cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...),cumsum*len(c)是类k前n个客户端的数量, idcs是第k个类在第i个客户端李
-                client_idcs[i] += [idcs]  # 把类k的数据的idx(max=10000)分到n个客户端中
-        client_idcs = [
-            train_idcs[np.concatenate(idcs)] for idcs in client_idcs
-        ]  # concatenate:对数列合并，把62个类的训练样本idx(max=10000)合起来,换成所有样本下的idx(max=60000)
-        return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
-
-    def __init__(self, dataloc, alpha, n_client):
-        DIRICHLET_ALPHA = alpha
-        # train_transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        # ])
-        train_transform = transform = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
-        )
-        mnist_train = datasets.FashionMNIST(
-            root=dataloc + "data", train=True, download=True, transform=train_transform
-        )
-        X, Y = [], []
-        for i in range(len(mnist_train)):  # 把训练集的50000个样本提取
-            X.append(mnist_train.data[i].numpy())
-            Y.append(mnist_train.targets[i])
-        X, Y = np.array(X), np.array(Y)
-        train_labels = Y
-        train_idx = np.arange(len(train_labels))
-        client_idcs = self.split_noniid(
-            train_idx, train_labels, alpha=DIRICHLET_ALPHA, n_clients=n_client
-        )  # 根据对称狄利克雷参数划分noniid数据
-
-        net_cls_counts = {}
-        for net_i, dataidx in enumerate(client_idcs):
-            unq, unq_cnt = np.unique(
-                Y[dataidx], return_counts=True
-            )  # 去除重复元素，得到类名和该类元素数量
-            tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-            net_cls_counts[net_i] = tmp
-        print("Data statistics Train:\n \t %s" % str(net_cls_counts))
-
-        # 数据分布可视化
-        # plt.figure(figsize=(20, 3))
-        # plt.hist([train_labels[idc] for idc in client_idcs], stacked=True, bins=np.arange(min(train_labels) - 0.5, max(train_labels) + 1.5, 1), label=["Client {}".format(i) for i in range(n_client)])
-        # mapp = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
-        # plt.xticks(np.arange(10), mapp)
-        # plt.legend()
-        # plt.show()
-
-        user_tr_data_tensors = []
-        user_tr_label_tensors = []
-        for client_data_idx in client_idcs:
-            user_tr_data_tensors.append(
-                torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
-            )
-            user_tr_label_tensors.append(
-                torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
-            )
-
-        mnist_test = datasets.FashionMNIST(
-            root=dataloc + "data", train=False, download=True, transform=train_transform
-        )
-        X = []
-        Y = []
-        for i in range(len(mnist_test)):  # 把测试集的10000个样本提取
-            X.append(mnist_test.data[i].numpy())
-            Y.append(mnist_test.targets[i])
-        X = np.array(X)
-        Y = np.array(Y)
-
-        shuffle_idx = np.arange(len(X))
-        np.random.shuffle(shuffle_idx)
-
-        X = X[shuffle_idx]
-        Y = Y[shuffle_idx]
-
-        test_labels = Y[:5000]
-        test_data = X[:5000]
-        te_data_tensor = torch.from_numpy(test_data).type(torch.FloatTensor)
-        te_label_tensor = torch.from_numpy(test_labels).type(torch.LongTensor)
-
-        unq, unq_cnt = np.unique(Y[:5000], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        print("Data statistics Test:\n \t %s" % str(tmp))
-
-        val_labels = Y[5000:]
-        val_data = X[5000:]
-        va_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
-        va_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
-
-        self.va_data_tensor = va_data_tensor
-        self.va_label_tensor = va_label_tensor
-        self.te_data_tensor = te_data_tensor
-        self.te_label_tensor = te_label_tensor
-        self.user_tr_data_tensors = user_tr_data_tensors
-        self.user_tr_label_tensors = user_tr_label_tensors
-
-
 class cifar10_iid:
     va_data_tensor = 0
     va_label_tensor = 0
@@ -1037,90 +835,51 @@ def full_knowledge_attack(args, datatensors):
         while epoch_num <= args.epoch:  # 1200个epoch
             user_grads = []  # full_knowledge良性梯度
             # 良性客户端训练一次 & full knowledge保存梯度
-            if args.dataset == "femnist":
-                round_users = np.random.choice(3597, args.num_clients - n_attacker)
-                for i in round_users:  # 和partial不同
-                    inputs = tr_data_tensors[i]
-                    targets = tr_label_tensors[i]
-                    inputs, targets = inputs.to(device), targets.to(device)
-                    fed_model = fed_model.to(device)
-                    inputs, targets = torch.autograd.Variable(
-                        inputs
-                    ), torch.autograd.Variable(
-                        targets
-                    )  # 将tensor包装起来成为计算图中的节点(可以装载梯度信息)
-                    outputs = fed_model(inputs)  # 输入样本，输出预测值
-                    loss = criterion(outputs, targets)  # 计算预测值与标签的交叉熵损失
-                    if math.isnan(loss):
-                        if save:
-                            with open(
-                                args.PATH_txt + f"nat{n_attacker}" + ".txt", "a"
-                            ) as txt:
-                                print("loss nan", file=txt)
-                        print("loss nan")
-                        exit()
-                    fed_model.zero_grad()  # 清空模型的梯度
-                    loss.backward(retain_graph=True)  # 反向传播，计算当前梯度保留梯度，且梯度不free
-                    param_grad = []  # 把参数的梯度拼接起来
-                    for param in fed_model.parameters():  # 对于模型中的每个参数
-                        param_grad = (
-                            param.grad.data.view(-1)
-                            if not len(param_grad)
-                            else torch.cat((param_grad, param.grad.view(-1)))
-                        )  # 将梯度拼接
-                    user_grads = (
-                        param_grad[None, :]
-                        if len(user_grads) == 0
-                        else torch.cat((user_grads, param_grad[None, :]), 0)
-                    )  # 保存该轮良性客户端的梯度
-            else:
-                for i in range(n_attacker, args.num_clients):  # 和partial不同
-                    nbatches = (
-                        len(tr_data_tensors[i]) // args.batchsize
-                    )  # 每个客户端一轮要训练几次，向下取整
-                    if epoch_num % nbatches == 0:  # 如果该客户端所有数据都训练完了就打乱再训练
-                        r = np.arange(len(tr_data_tensors[i]))
-                        np.random.shuffle(r)
-                        client_shuffle_idcs[i] = (
-                            client_shuffle_idcs[i][r]
-                            if len(client_shuffle_idcs[i])
-                            else r
-                        )
-                        tr_data_tensors[i] = tr_data_tensors[i][r]
-                        tr_label_tensors[i] = tr_label_tensors[i][r]
-                    inputs = tr_data_tensors[i][
-                        (epoch_num % nbatches)
-                        * args.batchsize : ((epoch_num % nbatches) + 1)
-                        * args.batchsize
-                    ]
-                    targets = tr_label_tensors[i][
-                        (epoch_num % nbatches)
-                        * args.batchsize : ((epoch_num % nbatches) + 1)
-                        * args.batchsize
-                    ]
-                    inputs, targets = inputs.to(device), targets.to(device)
-                    fed_model = fed_model.to(device)
-                    inputs, targets = torch.autograd.Variable(
-                        inputs
-                    ), torch.autograd.Variable(
-                        targets
-                    )  # 将tensor包装起来成为计算图中的节点(可以装载梯度信息)
-                    outputs = fed_model(inputs)  # 输入样本，输出预测值
-                    loss = criterion(outputs, targets)  # 计算预测值与标签的交叉熵损失
-                    fed_model.zero_grad()  # 清空模型的梯度
-                    loss.backward(retain_graph=True)  # 反向传播，计算当前梯度保留梯度，且梯度不free
-                    param_grad = []  # 把参数的梯度拼接起来
-                    for param in fed_model.parameters():  # 对于模型中的每个参数
-                        param_grad = (
-                            param.grad.data.view(-1)
-                            if not len(param_grad)
-                            else torch.cat((param_grad, param.grad.view(-1)))
-                        )  # 将梯度拼接
-                    user_grads = (
-                        param_grad[None, :]
-                        if len(user_grads) == 0
-                        else torch.cat((user_grads, param_grad[None, :]), 0)
-                    )  # 保存该轮良性客户端的梯度
+            for i in range(n_attacker, args.num_clients):  # 和partial不同
+                nbatches = (
+                    len(tr_data_tensors[i]) // args.batchsize
+                )  # 每个客户端一轮要训练几次，向下取整
+                if epoch_num % nbatches == 0:  # 如果该客户端所有数据都训练完了就打乱再训练
+                    r = np.arange(len(tr_data_tensors[i]))
+                    np.random.shuffle(r)
+                    client_shuffle_idcs[i] = (
+                        client_shuffle_idcs[i][r] if len(client_shuffle_idcs[i]) else r
+                    )
+                    tr_data_tensors[i] = tr_data_tensors[i][r]
+                    tr_label_tensors[i] = tr_label_tensors[i][r]
+                inputs = tr_data_tensors[i][
+                    (epoch_num % nbatches)
+                    * args.batchsize : ((epoch_num % nbatches) + 1)
+                    * args.batchsize
+                ]
+                targets = tr_label_tensors[i][
+                    (epoch_num % nbatches)
+                    * args.batchsize : ((epoch_num % nbatches) + 1)
+                    * args.batchsize
+                ]
+                inputs, targets = inputs.to(device), targets.to(device)
+                fed_model = fed_model.to(device)
+                inputs, targets = torch.autograd.Variable(
+                    inputs
+                ), torch.autograd.Variable(
+                    targets
+                )  # 将tensor包装起来成为计算图中的节点(可以装载梯度信息)
+                outputs = fed_model(inputs)  # 输入样本，输出预测值
+                loss = criterion(outputs, targets)  # 计算预测值与标签的交叉熵损失
+                fed_model.zero_grad()  # 清空模型的梯度
+                loss.backward(retain_graph=True)  # 反向传播，计算当前梯度保留梯度，且梯度不free
+                param_grad = []  # 把参数的梯度拼接起来
+                for param in fed_model.parameters():  # 对于模型中的每个参数
+                    param_grad = (
+                        param.grad.data.view(-1)
+                        if not len(param_grad)
+                        else torch.cat((param_grad, param.grad.view(-1)))
+                    )  # 将梯度拼接
+                user_grads = (
+                    param_grad[None, :]
+                    if len(user_grads) == 0
+                    else torch.cat((user_grads, param_grad[None, :]), 0)
+                )  # 保存该轮良性客户端的梯度
             del inputs
             del targets
             benign_grads = user_grads  # 和partial不同
