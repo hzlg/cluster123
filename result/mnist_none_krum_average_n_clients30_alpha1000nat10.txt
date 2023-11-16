@@ -1,0 +1,24 @@
+alpha 1000 n_clients 30 nat 10 at none at_agr krum agr average
+resume 0 save 1
+none-krum: average n_at 10 epoch 0 test loss 1.8852 test acc 59.2200
+none-krum: average n_at 10 epoch 25 test loss 0.3081 test acc 91.1000
+none-krum: average n_at 10 epoch 50 test loss 0.2176 test acc 93.6000
+none-krum: average n_at 10 epoch 75 test loss 0.1635 test acc 95.1600
+none-krum: average n_at 10 epoch 100 test loss 0.1305 test acc 96.0600
+none-krum: average n_at 10 epoch 125 test loss 0.1093 test acc 96.7200
+none-krum: average n_at 10 epoch 150 test loss 0.0958 test acc 96.9200
+none-krum: average n_at 10 epoch 175 test loss 0.0870 test acc 97.2400
+none-krum: average n_at 10 epoch 200 test loss 0.0819 test acc 97.5000
+none-krum: average n_at 10 epoch 225 test loss 0.0781 test acc 97.6600
+none-krum: average n_at 10 epoch 250 test loss 0.0763 test acc 97.6600
+none-krum: average n_at 10 epoch 275 test loss 0.0748 test acc 97.5800
+none-krum: average n_at 10 epoch 300 test loss 0.0749 test acc 97.6800
+none-krum: average n_at 10 epoch 325 test loss 0.0748 test acc 97.6800
+none-krum: average n_at 10 epoch 350 test loss 0.0749 test acc 97.7800
+none-krum: average n_at 10 epoch 375 test loss 0.0754 test acc 97.8400
+none-krum: average n_at 10 epoch 400 test loss 0.0759 test acc 97.8400
+none-krum: average n_at 10 epoch 425 test loss 0.0763 test acc 97.8000
+none-krum: average n_at 10 epoch 450 test loss 0.0777 test acc 97.7200
+none-krum: average n_at 10 epoch 475 test loss 0.0780 test acc 97.8000
+none-krum: average n_at 10 epoch 499 test loss 0.0789 test acc 97.8000
+none-krum: average n_at 10 epoch 500 test loss 0.0788 test acc 97.7800
