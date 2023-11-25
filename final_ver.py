@@ -434,103 +434,6 @@ class label_dis_skew_data:
         self.user_tr_label_tensors = user_tr_label_tensors
 
 
-class cifar10_iid:
-    val_data_tensor = 0
-    val_label_tensor = 0
-    te_data_tensor = 0
-    te_label_tensor = 0
-    user_tr_data_tensors = 0
-    user_tr_label_tensors = 0
-
-    def __init__(self, dataloc, alpha, n_client):
-        train_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-                ),
-            ]
-        )
-        cifar10_train = datasets.CIFAR10(
-            root=dataloc, train=True, download=False, transform=train_transform
-        )
-
-        X = []
-        Y = []
-        for i in range(len(cifar10_train)):
-            X.append(cifar10_train[i][0].numpy())
-            Y.append(cifar10_train[i][1])
-        X = np.array(X)
-        Y = np.array(Y)
-
-        all_indices = np.arange(len(X))
-        np.random.shuffle(all_indices)
-
-        X = X[all_indices]
-        Y = Y[all_indices]
-
-        user_tr_len = len(X) / n_client
-
-        user_tr_data_tensors = []
-        user_tr_label_tensors = []
-
-        for i in range(n_client):
-            user_tr_data_tensor = torch.from_numpy(
-                X[user_tr_len * i : user_tr_len * (i + 1)]
-            ).type(torch.FloatTensor)
-            user_tr_label_tensor = torch.from_numpy(
-                Y[user_tr_len * i : user_tr_len * (i + 1)]
-            ).type(torch.LongTensor)
-
-            user_tr_data_tensors.append(user_tr_data_tensor)
-            user_tr_label_tensors.append(user_tr_label_tensor)
-            print("user %d tr len %d" % (i, len(user_tr_data_tensor)))
-
-        cifar10_test = datasets.CIFAR10(
-            root=dataloc + "data",
-            train=False,
-            download=False,
-            transform=train_transform,
-        )
-        X = []
-        Y = []
-        for i in range(len(cifar10_test)):  # 把测试集的10000个样本提取
-            X.append(cifar10_test[i][0].numpy())
-            Y.append(cifar10_test[i][1])
-        X = np.array(X)
-        Y = np.array(Y)
-
-        if not os.path.isfile("./cifar10_shuffle.pkl"):
-            shuffle_idx = np.arange(len(X))
-            np.random.shuffle(shuffle_idx)
-            pickle.dump(shuffle_idx, open("./cifar10_shuffle.pkl", "wb"))
-        else:
-            shuffle_idx = pickle.load(open("./cifar10_shuffle.pkl", "rb"))
-        X = X[shuffle_idx]
-        Y = Y[shuffle_idx]
-
-        test_labels = Y[:5000]
-        test_data = X[:5000]
-        te_data_tensor = torch.from_numpy(test_data).type(torch.FloatTensor)
-        te_label_tensor = torch.from_numpy(test_labels).type(torch.LongTensor)
-
-        unq, unq_cnt = np.unique(Y[:5000], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        print("Data statistics Test:\n \t %s" % str(tmp))
-
-        val_labels = Y[5000:]
-        val_data = X[5000:]
-        val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
-        val_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
-
-        self.val_data_tensor = val_data_tensor
-        self.val_label_tensor = val_label_tensor
-        self.te_data_tensor = te_data_tensor
-        self.te_label_tensor = te_label_tensor
-        self.user_tr_data_tensors = user_tr_data_tensors
-        self.user_tr_label_tensors = user_tr_label_tensors
-
-
 def cluster_test(updates, train_tools):
     (
         te_data_tensor,
@@ -898,8 +801,8 @@ def full_knowledge_attack(args, datatensors):
 
             if args.is_server:
                 torch.cuda.empty_cache()
-                server_inputs = val_data_tensor[:1000]
-                server_targets = val_label_tensor[:1000]
+                server_inputs = val_data_tensor
+                server_targets = val_label_tensor
                 server_inputs, server_targets = server_inputs.to(
                     device
                 ), server_targets.to(device)
@@ -996,8 +899,8 @@ def full_knowledge_attack(args, datatensors):
             #  聚合
             if args.agr == "cluster":
                 train_tool = [
-                    val_data_tensor[:1000],
-                    val_label_tensor[:1000],
+                    val_data_tensor,
+                    val_label_tensor,
                     fed_model,
                     optimizer_fed,
                     fed_lr,
