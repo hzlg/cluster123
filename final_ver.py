@@ -15,10 +15,10 @@ import json
 from adam import Adam
 from sgd import SGD
 
-sys.path.insert(0, "../utils/")
-from logger import *
-from eval import *
-from misc import *
+# sys.path.insert(0, "../utils/")
+# from logger import *
+# from eval import *
+# from misc import *
 from normal_train import *
 from final_util import *
 from at_agr import *
@@ -29,12 +29,14 @@ from scipy.cluster.hierarchy import linkage, to_tree
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--alpha", type=int, default=1)
-    parser.add_argument("--num_clients", type=int, default=30)
-    parser.add_argument("--num_attackers", type=list, default=[10])
-    parser.add_argument("--num_clusters", type=int, default=2)
-    parser.add_argument("--gap", type=float, default=0.01)
+    parser.add_argument("--alpha", type=int, default=1)  # 控制狄利克雷分布
+    parser.add_argument("--num_clients", type=int, default=5)  # 客户端数量
+    parser.add_argument("--num_test_data", type=int, default=5000)  # 测试集数量
+    parser.add_argument("--num_val_data", type=int, default=5000)  # 验证集数量
+    parser.add_argument("--num_attackers", type=list, default=[10])  # 攻击者数量
 
+    parser.add_argument("--num_clusters", type=int, default=2)  # 聚类数量
+    parser.add_argument("--gap", type=float, default=0.01)  # acc差距
     parser.add_argument(
         "--linkage_method",
         type=str,
@@ -140,9 +142,7 @@ def init_data(args):
     if not os.path.isfile(
         f"./{args.dataset}_{args.num_clients}_{args.alpha}_dataset.pkl"
     ):
-        data_tensors_class = label_dis_skew_data(
-            args.dataloc, args.alpha, args.num_clients, args.dataset
-        )
+        data_tensors_class = label_dis_skew_data(args)
         pickle.dump(
             data_tensors_class,
             open(
@@ -161,33 +161,39 @@ def init_data(args):
 
 
 class label_dis_skew_data:
-    va_data_tensor = 0
-    va_label_tensor = 0
+    val_data_tensor = 0
+    val_label_tensor = 0
     te_data_tensor = 0
     te_label_tensor = 0
     user_tr_data_tensors = 0
     user_tr_label_tensors = 0
 
     def split_noniid(self, train_idcs, train_labels, alpha, n_clients):
-        n_classes = train_labels.max() + 1  # train_labels内的元素为[0,61],类数为62
+        n_classes = train_labels.max() + 1
+
         label_distribution = np.random.dirichlet(
             [alpha] * n_clients, n_classes
-        )  # (类数K=62,客户端数N=10)，行向量是类K在每个客户端上的概率分布向量
+        )  # (数据集类别数，客户端数) 行向量是类K在每个客户端上的概率分布向量
+
         class_idcs = [
             np.argwhere(train_labels[train_idcs] == y).flatten()
             for y in range(n_classes)
-        ]  # 把10000个数据中的62个类分离出来,得到62个idx组成的ndarray
-        client_idcs = [[] for _ in range(n_clients)]  # （10，62）
+        ]  # 分离数据中的每个类别,每个元素是类别K的数据的idx
+
+        client_idcs = [[] for _ in range(n_clients)]  # （客户端数，类别数）
+
         for c, fracs in zip(
             class_idcs, label_distribution
-        ):  # c是label为k的样本的idx,fracs是个类k的概率分布向量
+        ):  # 循环k次(类别数),c是label为k的样本的idx,fracs是类k的概率分布向量
             for i, idcs in enumerate(
                 np.split(c, (np.cumsum(fracs)[:-1] * len(c)).astype(int))
-            ):  # cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...),cumsum*len(c)是类k前n个客户端的数量, idcs是第k个类在第i个客户端李
+            ):  # 循环i次(客户端数),cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...), idcs是第k个类在第i个客户端的idx
                 client_idcs[i] += [idcs]  # 把类k的数据的idx(max=10000)分到n个客户端中
+
         client_idcs = [
             train_idcs[np.concatenate(idcs)] for idcs in client_idcs
         ]  # concatenate:对数列合并，把62个类的训练样本idx(max=10000)合起来,换成所有样本下的idx(max=60000)
+
         return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
 
     def split_noniid2(self, n_dis, train_labels, alpha, n_clients):
@@ -225,9 +231,11 @@ class label_dis_skew_data:
             [],
         )
 
-    def __init__(self, dataloc, alpha, n_client, data_name):
-        DIRICHLET_ALPHA = alpha
-        if data_name == "cifar10":
+    def __init__(self, args):
+        # 加载数据集
+        data_train = []
+        data_test = []
+        if args.dataset == "cifar10":
             train_transform = transforms.Compose(
                 [
                     transforms.ToTensor(),
@@ -237,51 +245,103 @@ class label_dis_skew_data:
                 ]
             )
             data_train = datasets.CIFAR10(
-                root=dataloc,
+                root=args.dataloc,
                 train=True,
                 download=False,
                 transform=train_transform,
             )
-        elif data_name == "mnist":
+            data_test = datasets.CIFAR10(
+                root=args.dataloc,
+                train=False,
+                download=False,
+                transform=train_transform,
+            )
+        elif args.dataset == "mnist":
             train_transform = transforms.Compose(
                 [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
             )
             data_train = datasets.MNIST(
-                root=dataloc,
+                root=args.dataloc,
                 train=True,
                 download=False,
                 transform=train_transform,
             )
-        elif data_name == "famnist":
+            data_test = datasets.MNIST(
+                root=args.dataloc,
+                train=False,
+                download=False,
+                transform=train_transform,
+            )
+        elif args.dataset == "famnist":
             train_transform = transforms.Compose(
                 [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
             )
             data_train = datasets.FashionMNIST(
-                root=dataloc,
+                root=args.dataloc,
                 train=True,
                 download=True,
                 transform=train_transform,
             )
+            data_test = datasets.FashionMNISTMNIST(
+                root=args.dataloc,
+                train=False,
+                download=True,
+                transform=train_transform,
+            )
 
+        # 打乱数据集
         X, Y = [], []
-        for i in range(len(data_train)):  # 把训练集的50000个样本提取
+        for i in range(len(data_train)):
             X.append(data_train[i][0].numpy())
             Y.append(data_train[i][1])
+        for i in range(len(data_test)):
+            X.append(data_test[i][0].numpy())
+            Y.append(data_test[i][1])
         X, Y = np.array(X), np.array(Y)
-        train_labels = Y
+        if not os.path.isfile(f"./{args.dataset}_iid_shuffle.pkl"):
+            all_indices = np.arange(len(X))
+            np.random.shuffle(all_indices)
+            pickle.dump(all_indices, open(f"./{args.dataset}_iid_shuffle.pkl", "wb"))
+        else:
+            all_indices = pickle.load(open(f"./{args.dataset}_iid_shuffle.pkl", "rb"))
+        X, Y = X[all_indices], Y[all_indices]
 
+        # iid测试集
+        te_data = X[: args.num_test_data]
+        te_label = Y[: args.num_test_data]
+        te_data_tensor = torch.from_numpy(te_data).type(torch.FloatTensor)
+        te_label_tensor = torch.from_numpy(te_label).type(torch.LongTensor)
+        # 统计每一类别的个数
+        unq, unq_cnt = np.unique(te_label, return_counts=True)  # 去除重复元素，得到类名和该类元素数量
+        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+        print("Data statistics Test:\n \t %s" % str(tmp))
+
+        # iid/noniid 验证集
+        val_data = X[args.num_test_data : args.num_test_data + args.num_val_data]
+        val_label = Y[args.num_test_data : args.num_test_data + args.num_val_data]
+        val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
+        val_label_tensor = torch.from_numpy(val_label).type(torch.LongTensor)
+        # 统计每一类别的个数
+        unq, unq_cnt = np.unique(val_label, return_counts=True)  # 去除重复元素，得到类名和该类元素数量
+        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+        print("Data statistics Val:\n \t %s" % str(tmp))
+
+        # iid/noniid 训练集
+        total_tr_data = X[args.num_test_data + args.num_val_data :]
+        total_tr_label = Y[args.num_test_data + args.num_val_data :]
+
+        split_label = total_tr_label
         # n_dis = 5
-        # client_idcs = self.split_noniid2(n_dis, train_labels, DIRICHLET_ALPHA, n_client)
-
-        train_idx = np.arange(len(train_labels))
+        # client_idcs = self.split_noniid2(n_dis, train_labels, args.alpha, args.num_clients)
+        split_idx = np.arange(len(split_label))
         client_idcs = self.split_noniid(
-            train_idx, train_labels, alpha=DIRICHLET_ALPHA, n_clients=n_client
+            split_idx, split_label, alpha=args.alpha, n_clients=args.num_clients
         )  # 根据对称狄利克雷参数划分noniid数据
-
+        # 统计每一类别的个数
         net_cls_counts = {}
         for net_i, dataidx in enumerate(client_idcs):
             unq, unq_cnt = np.unique(
-                Y[dataidx], return_counts=True
+                total_tr_label[dataidx], return_counts=True
             )  # 去除重复元素，得到类名和该类元素数量
             tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
             net_cls_counts[net_i] = tmp
@@ -299,66 +359,14 @@ class label_dis_skew_data:
         user_tr_label_tensors = []
         for client_data_idx in client_idcs:
             user_tr_data_tensors.append(
-                torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
+                torch.from_numpy(total_tr_data[client_data_idx]).type(torch.FloatTensor)
             )
             user_tr_label_tensors.append(
-                torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
+                torch.from_numpy(total_tr_label[client_data_idx]).type(torch.LongTensor)
             )
 
-        if data_name == "cifar10":
-            data_test = datasets.CIFAR10(
-                root=dataloc + "data",
-                train=False,
-                download=False,
-                transform=train_transform,
-            )
-        elif data_name == "mnist":
-            data_test = datasets.MNIST(
-                root=dataloc + "data",
-                train=False,
-                download=False,
-                transform=train_transform,
-            )
-        elif data_name == "famnist":
-            data_test = datasets.FashionMNISTMNIST(
-                root=dataloc + "data",
-                train=False,
-                download=True,
-                transform=train_transform,
-            )
-        X = []
-        Y = []
-        for i in range(len(data_test)):  # 把测试集的10000个样本提取
-            X.append(data_test[i][0].numpy())
-            Y.append(data_test[i][1])
-        X = np.array(X)
-        Y = np.array(Y)
-
-        if not os.path.isfile("./" + data_name + "_shuffle.pkl"):
-            shuffle_idx = np.arange(len(X))
-            np.random.shuffle(shuffle_idx)
-            pickle.dump(shuffle_idx, open("./" + data_name + "_shuffle.pkl", "wb"))
-        else:
-            shuffle_idx = pickle.load(open("./" + data_name + "_shuffle.pkl", "rb"))
-        X = X[shuffle_idx]
-        Y = Y[shuffle_idx]
-
-        test_labels = Y[:5000]
-        test_data = X[:5000]
-        te_data_tensor = torch.from_numpy(test_data).type(torch.FloatTensor)
-        te_label_tensor = torch.from_numpy(test_labels).type(torch.LongTensor)
-
-        unq, unq_cnt = np.unique(Y[:5000], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        print("Data statistics Test:\n \t %s" % str(tmp))
-
-        val_labels = Y[500:]
-        val_data = X[500:]
-        va_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
-        va_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
-
-        self.va_data_tensor = va_data_tensor
-        self.va_label_tensor = va_label_tensor
+        self.val_data_tensor = val_data_tensor
+        self.val_label_tensor = val_label_tensor
         self.te_data_tensor = te_data_tensor
         self.te_label_tensor = te_label_tensor
         self.user_tr_data_tensors = user_tr_data_tensors
@@ -366,8 +374,8 @@ class label_dis_skew_data:
 
 
 class cifar10_iid:
-    va_data_tensor = 0
-    va_label_tensor = 0
+    val_data_tensor = 0
+    val_label_tensor = 0
     te_data_tensor = 0
     te_label_tensor = 0
     user_tr_data_tensors = 0
@@ -451,11 +459,11 @@ class cifar10_iid:
 
         val_labels = Y[5000:]
         val_data = X[5000:]
-        va_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
-        va_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
+        val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
+        val_label_tensor = torch.from_numpy(val_labels).type(torch.LongTensor)
 
-        self.va_data_tensor = va_data_tensor
-        self.va_label_tensor = va_label_tensor
+        self.val_data_tensor = val_data_tensor
+        self.val_label_tensor = val_label_tensor
         self.te_data_tensor = te_data_tensor
         self.te_label_tensor = te_label_tensor
         self.user_tr_data_tensors = user_tr_data_tensors
@@ -689,8 +697,8 @@ def abcd_min_los(mal_updates, train_tools, gap, linkage_method):
 def full_knowledge_attack(args, datatensors):
     use_cuda = torch.cuda.is_available()
     device = "cuda" if use_cuda else "cpu"
-    val_data_tensor = datatensors.va_data_tensor
-    val_label_tensor = datatensors.va_label_tensor
+    val_data_tensor = datatensors.val_data_tensor
+    val_label_tensor = datatensors.val_label_tensor
     test_data_tensor = datatensors.te_data_tensor
     test_label_tensor = datatensors.te_label_tensor
     tr_data_tensors = datatensors.user_tr_data_tensors
