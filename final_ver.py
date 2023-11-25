@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--num_test_data", type=int, default=5000)  # 测试集数量
     parser.add_argument("--num_val_data", type=int, default=5000)  # 验证集数量
     parser.add_argument("--num_attackers", type=list, default=[10])  # 攻击者数量
-
+    parser.add_argument("--num_dis", type=int, default=5)  # 聚类数量
     parser.add_argument("--num_clusters", type=int, default=2)  # 聚类数量
     parser.add_argument("--gap", type=float, default=0.01)  # acc差距
     parser.add_argument(
@@ -195,7 +195,7 @@ class label_dis_skew_data:
 
         return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
 
-    def split_noniid2(self, n_dis, train_labels, alpha, n_clients):
+    def split_noniid2(self, n_dis, train_labels, alpha, n_clients, client_data_num):
         n_classes = train_labels.max() + 1  # train_labels内的元素为[0,9],类数为10
         label_distribution = np.random.dirichlet(
             [alpha] * n_classes, n_dis
@@ -203,8 +203,6 @@ class label_dis_skew_data:
         class_idx_list = [
             np.argwhere(train_labels == y).flatten().tolist() for y in range(n_classes)
         ]  # 把10个类分离出来,得到10个idx组成的ndarray (max=60000)
-
-        client_data_num = len(train_labels) // n_clients  # 每个客户端有多少数据
         dis_each_class_num = client_data_num * label_distribution  # 每个客户端在每个类中有多少个数据
         dis_each_class_num = np.array(dis_each_class_num).astype(
             int
@@ -344,24 +342,45 @@ class label_dis_skew_data:
                 user_tr_data_tensors.append(user_tr_data_tensor)
                 user_tr_label_tensors.append(user_tr_label_tensor)
         else:
-            noniid_data = X[args.num_test_data :]
-            noniid_label = Y[args.num_test_data :]
-
-            client_dis = get_dis()
             # client_idcs = self.split_noniid(
             #     total_tr_label, alpha=args.alpha, n_clients=args.num_clients
             # )  # 根据对称狄利克雷参数划分noniid数据
 
-            n_dis = 5
-            client_idcs = self.split_noniid2(
-                n_dis, total_tr_label, args.alpha, args.num_clients
+            noniid_data = X[args.num_test_data :]
+            noniid_label = Y[args.num_test_data :]
+            val_idcs = self.split_noniid2(
+                1, noniid_label, args.alpha, 1, args.num_val_data
+            )[
+                0
+            ]  # 随机生成1个分布，分配5000个样本
+            val_data_tensor = torch.from_numpy(noniid_data[val_idcs]).type(
+                torch.FloatTensor
             )
+            val_label_tensor = torch.from_numpy(noniid_label[val_idcs]).type(
+                torch.LongTensor
+            )
+            # 统计每一类别的个数
+            unq, unq_cnt = np.unique(
+                noniid_label[val_idcs], return_counts=True
+            )  # 去除重复元素，得到类名和该类元素数量
+            tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+            print("Data statistics Val:\n \t %s", str(tmp))
 
+            noniid_data = np.delete(noniid_data, val_idcs, axis=0)
+            noniid_label = np.delete(noniid_label, val_idcs, axis=0)
+
+            client_idcs = self.split_noniid2(
+                args.num_dis,
+                noniid_label,
+                args.alpha,
+                args.num_clients,
+                (len(noniid_label) - args.num_val_data) // args.num_clients,
+            )
             # 统计每一类别的个数
             net_cls_counts = {}
             for net_i, dataidx in enumerate(client_idcs):
                 unq, unq_cnt = np.unique(
-                    total_tr_label[dataidx], return_counts=True
+                    noniid_label[dataidx], return_counts=True
                 )  # 去除重复元素，得到类名和该类元素数量
                 tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
                 net_cls_counts[net_i] = tmp
@@ -369,40 +388,40 @@ class label_dis_skew_data:
             for _ in range(len(net_cls_counts)):
                 print(str(net_cls_counts[_]))
 
-            # 数据分布可视化
-            plt.figure(figsize=(20, 3))
-            plt.hist(
-                [total_tr_label[idc] for idc in client_idcs],
-                stacked=True,
-                bins=np.arange(min(total_tr_label) - 0.5, max(total_tr_label) + 1.5, 1),
-                label=["Client {}".format(i) for i in range(args.num_clients)],
-            )
-            mapp = [
-                "airplane",
-                "automobile",
-                "bird",
-                "cat",
-                "deer",
-                "dog",
-                "frog",
-                "horse",
-                "ship",
-                "truck",
-            ]
-            plt.xticks(np.arange(10), mapp)
-            plt.legend()
-            plt.show()
+            # # 数据分布可视化
+            # plt.figure(figsize=(20, 3))
+            # plt.hist(
+            #     [total_tr_label[idc] for idc in client_idcs],
+            #     stacked=True,
+            #     bins=np.arange(min(total_tr_label) - 0.5, max(total_tr_label) + 1.5, 1),
+            #     label=["Client {}".format(i) for i in range(args.num_clients)],
+            # )
+            # mapp = [
+            #     "airplane",
+            #     "automobile",
+            #     "bird",
+            #     "cat",
+            #     "deer",
+            #     "dog",
+            #     "frog",
+            #     "horse",
+            #     "ship",
+            #     "truck",
+            # ]
+            # plt.xticks(np.arange(10), mapp)
+            # plt.legend()
+            # plt.show()
 
             user_tr_data_tensors = []
             user_tr_label_tensors = []
             for client_data_idx in client_idcs:
                 user_tr_data_tensors.append(
-                    torch.from_numpy(total_tr_data[client_data_idx]).type(
+                    torch.from_numpy(noniid_data[client_data_idx]).type(
                         torch.FloatTensor
                     )
                 )
                 user_tr_label_tensors.append(
-                    torch.from_numpy(total_tr_label[client_data_idx]).type(
+                    torch.from_numpy(noniid_label[client_data_idx]).type(
                         torch.LongTensor
                     )
                 )
