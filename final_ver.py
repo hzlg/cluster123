@@ -30,7 +30,7 @@ from scipy.cluster.hierarchy import linkage, to_tree
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--alpha", type=int, default=1)  # 控制狄利克雷分布
-    parser.add_argument("--num_clients", type=int, default=5)  # 客户端数量
+    parser.add_argument("--num_clients", type=int, default=50)  # 客户端数量
     parser.add_argument("--num_test_data", type=int, default=5000)  # 测试集数量
     parser.add_argument("--num_val_data", type=int, default=5000)  # 验证集数量
     parser.add_argument("--num_attackers", type=list, default=[10])  # 攻击者数量
@@ -168,7 +168,8 @@ class label_dis_skew_data:
     user_tr_data_tensors = 0
     user_tr_label_tensors = 0
 
-    def split_noniid(self, train_idcs, train_labels, alpha, n_clients):
+    def split_noniid(self, train_labels, alpha, n_clients):
+        train_idcs = np.arange(len(train_labels))
         n_classes = train_labels.max() + 1
 
         label_distribution = np.random.dirichlet(
@@ -190,9 +191,7 @@ class label_dis_skew_data:
             ):  # 循环i次(客户端数),cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...), idcs是第k个类在第i个客户端的idx
                 client_idcs[i] += [idcs]  # 把类k的数据的idx(max=10000)分到n个客户端中
 
-        client_idcs = [
-            train_idcs[np.concatenate(idcs)] for idcs in client_idcs
-        ]  # concatenate:对数列合并，把62个类的训练样本idx(max=10000)合起来,换成所有样本下的idx(max=60000)
+        client_idcs = [train_idcs[np.concatenate(idcs)] for idcs in client_idcs]
 
         return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
 
@@ -203,13 +202,13 @@ class label_dis_skew_data:
         )  # 从n_classes维对称狄利克雷分布中采n_clients个样本
         class_idx_list = [
             np.argwhere(train_labels == y).flatten().tolist() for y in range(n_classes)
-        ]  # 把10个类分离出来,得到10个idx组成的ndarray
+        ]  # 把10个类分离出来,得到10个idx组成的ndarray (max=60000)
 
         client_data_num = len(train_labels) // n_clients  # 每个客户端有多少数据
         dis_each_class_num = client_data_num * label_distribution  # 每个客户端在每个类中有多少个数据
-        dis_each_class_num = np.array(dis_each_class_num + 1).astype(
+        dis_each_class_num = np.array(dis_each_class_num).astype(
             int
-        )  # 确保每个类都有一个样本，auc计算不报错
+        )  # 要计算auc不报错需要保证每个类都有1个样本
         client_idx_list = [[] for _ in range(n_clients)]
         for i in range(n_clients):
             for j in range(n_classes):
@@ -229,7 +228,7 @@ class label_dis_skew_data:
                 for j in range(n_clients // n_dis)
             ],
             [],
-        )
+        )  # 把客户端顺序打乱，eg:001122->012012
 
     def __init__(self, args):
         # 加载数据集
@@ -298,12 +297,12 @@ class label_dis_skew_data:
             X.append(data_test[i][0].numpy())
             Y.append(data_test[i][1])
         X, Y = np.array(X), np.array(Y)
-        if not os.path.isfile(f"./{args.dataset}_iid_shuffle.pkl"):
+        if not os.path.isfile(f"./{args.dataset}_all_shuffle.pkl"):
             all_indices = np.arange(len(X))
             np.random.shuffle(all_indices)
-            pickle.dump(all_indices, open(f"./{args.dataset}_iid_shuffle.pkl", "wb"))
+            pickle.dump(all_indices, open(f"./{args.dataset}_all_shuffle.pkl", "wb"))
         else:
-            all_indices = pickle.load(open(f"./{args.dataset}_iid_shuffle.pkl", "rb"))
+            all_indices = pickle.load(open(f"./{args.dataset}_all_shuffle.pkl", "rb"))
         X, Y = X[all_indices], Y[all_indices]
 
         # iid测试集
@@ -316,54 +315,97 @@ class label_dis_skew_data:
         tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
         print("Data statistics Test:\n \t %s" % str(tmp))
 
-        # iid/noniid 验证集
-        val_data = X[args.num_test_data : args.num_test_data + args.num_val_data]
-        val_label = Y[args.num_test_data : args.num_test_data + args.num_val_data]
-        val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
-        val_label_tensor = torch.from_numpy(val_label).type(torch.LongTensor)
-        # 统计每一类别的个数
-        unq, unq_cnt = np.unique(val_label, return_counts=True)  # 去除重复元素，得到类名和该类元素数量
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        print("Data statistics Val:\n \t %s" % str(tmp))
-
-        # iid/noniid 训练集
-        total_tr_data = X[args.num_test_data + args.num_val_data :]
-        total_tr_label = Y[args.num_test_data + args.num_val_data :]
-
-        split_label = total_tr_label
-        # n_dis = 5
-        # client_idcs = self.split_noniid2(n_dis, train_labels, args.alpha, args.num_clients)
-        split_idx = np.arange(len(split_label))
-        client_idcs = self.split_noniid(
-            split_idx, split_label, alpha=args.alpha, n_clients=args.num_clients
-        )  # 根据对称狄利克雷参数划分noniid数据
-        # 统计每一类别的个数
-        net_cls_counts = {}
-        for net_i, dataidx in enumerate(client_idcs):
+        if args.alpha == 1000:
+            # iid 验证集
+            val_data = X[args.num_test_data : args.num_test_data + args.num_val_data]
+            val_label = Y[args.num_test_data : args.num_test_data + args.num_val_data]
+            val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
+            val_label_tensor = torch.from_numpy(val_label).type(torch.LongTensor)
+            # 统计每一类别的个数
             unq, unq_cnt = np.unique(
-                total_tr_label[dataidx], return_counts=True
+                val_label, return_counts=True
             )  # 去除重复元素，得到类名和该类元素数量
             tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-            net_cls_counts[net_i] = tmp
-        print("Data statistics Train:\n \t %s" % str(net_cls_counts))
+            print("Data statistics Val:\n \t %s" % str(tmp))
 
-        # 数据分布可视化
-        # plt.figure(figsize=(20, 3))
-        # plt.hist([train_labels[idc] for idc in client_idcs], stacked=True, bins=np.arange(min(train_labels) - 0.5, max(train_labels) + 1.5, 1), label=["Client {}".format(i) for i in range(n_client)])
-        # mapp = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
-        # plt.xticks(np.arange(10), mapp)
-        # plt.legend()
-        # plt.show()
+            # iid 训练集
+            total_tr_data = X[args.num_test_data + args.num_val_data :]
+            total_tr_label = Y[args.num_test_data + args.num_val_data :]
+            user_tr_data_tensors = []
+            user_tr_label_tensors = []
+            user_tr_len = len(total_tr_data) // args.num_clients
+            for i in range(args.num_clients):
+                user_tr_data_tensor = torch.from_numpy(
+                    total_tr_data[user_tr_len * i : user_tr_len * (i + 1)]
+                ).type(torch.FloatTensor)
+                user_tr_label_tensor = torch.from_numpy(
+                    total_tr_label[user_tr_len * i : user_tr_len * (i + 1)]
+                ).type(torch.LongTensor)
+                user_tr_data_tensors.append(user_tr_data_tensor)
+                user_tr_label_tensors.append(user_tr_label_tensor)
+        else:
+            noniid_data = X[args.num_test_data :]
+            noniid_label = Y[args.num_test_data :]
 
-        user_tr_data_tensors = []
-        user_tr_label_tensors = []
-        for client_data_idx in client_idcs:
-            user_tr_data_tensors.append(
-                torch.from_numpy(total_tr_data[client_data_idx]).type(torch.FloatTensor)
+            client_dis = get_dis()
+            # client_idcs = self.split_noniid(
+            #     total_tr_label, alpha=args.alpha, n_clients=args.num_clients
+            # )  # 根据对称狄利克雷参数划分noniid数据
+
+            n_dis = 5
+            client_idcs = self.split_noniid2(
+                n_dis, total_tr_label, args.alpha, args.num_clients
             )
-            user_tr_label_tensors.append(
-                torch.from_numpy(total_tr_label[client_data_idx]).type(torch.LongTensor)
+
+            # 统计每一类别的个数
+            net_cls_counts = {}
+            for net_i, dataidx in enumerate(client_idcs):
+                unq, unq_cnt = np.unique(
+                    total_tr_label[dataidx], return_counts=True
+                )  # 去除重复元素，得到类名和该类元素数量
+                tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+                net_cls_counts[net_i] = tmp
+            print("Data statistics Train:\n \t", end="")
+            for _ in range(len(net_cls_counts)):
+                print(str(net_cls_counts[_]))
+
+            # 数据分布可视化
+            plt.figure(figsize=(20, 3))
+            plt.hist(
+                [total_tr_label[idc] for idc in client_idcs],
+                stacked=True,
+                bins=np.arange(min(total_tr_label) - 0.5, max(total_tr_label) + 1.5, 1),
+                label=["Client {}".format(i) for i in range(args.num_clients)],
             )
+            mapp = [
+                "airplane",
+                "automobile",
+                "bird",
+                "cat",
+                "deer",
+                "dog",
+                "frog",
+                "horse",
+                "ship",
+                "truck",
+            ]
+            plt.xticks(np.arange(10), mapp)
+            plt.legend()
+            plt.show()
+
+            user_tr_data_tensors = []
+            user_tr_label_tensors = []
+            for client_data_idx in client_idcs:
+                user_tr_data_tensors.append(
+                    torch.from_numpy(total_tr_data[client_data_idx]).type(
+                        torch.FloatTensor
+                    )
+                )
+                user_tr_label_tensors.append(
+                    torch.from_numpy(total_tr_label[client_data_idx]).type(
+                        torch.LongTensor
+                    )
+                )
 
         self.val_data_tensor = val_data_tensor
         self.val_label_tensor = val_label_tensor
@@ -786,7 +828,6 @@ def full_knowledge_attack(args, datatensors):
         while epoch_num <= args.epoch:  # 1200个epoch
             user_grads = []  # full_knowledge良性梯度
             # 良性客户端训练一次 & full knowledge保存梯度
-            inputs = 0
             for i in range(n_attacker, args.num_clients):  # 和partial不同
                 nbatches = (
                     len(tr_data_tensors[i]) // args.batchsize

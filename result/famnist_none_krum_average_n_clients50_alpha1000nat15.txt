@@ -1,0 +1,2 @@
+alpha 1000 n_clients 50 nat 15 at none at_agr krum agr average
+resume 0 save 1
