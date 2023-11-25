@@ -279,13 +279,13 @@ class label_dis_skew_data:
             data_train = datasets.FashionMNIST(
                 root=args.dataloc,
                 train=True,
-                download=True,
+                download=False,
                 transform=train_transform,
             )
-            data_test = datasets.FashionMNISTMNIST(
+            data_test = datasets.FashionMNIST(
                 root=args.dataloc,
                 train=False,
-                download=True,
+                download=False,
                 transform=train_transform,
             )
 
@@ -786,6 +786,7 @@ def full_knowledge_attack(args, datatensors):
         while epoch_num <= args.epoch:  # 1200个epoch
             user_grads = []  # full_knowledge良性梯度
             # 良性客户端训练一次 & full knowledge保存梯度
+            inputs = 0
             for i in range(n_attacker, args.num_clients):  # 和partial不同
                 nbatches = (
                     len(tr_data_tensors[i]) // args.batchsize
