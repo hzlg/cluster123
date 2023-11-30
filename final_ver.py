@@ -34,7 +34,8 @@ def parse_args():
     parser.add_argument("--val_alpha", type=int, default=1000)  # 控制狄利克雷分布
     parser.add_argument("--num_dis", type=int, default=5)  # 分布数量
     parser.add_argument("--num_clients", type=int, default=50)  # 客户端数量
-    parser.add_argument("--num_attackers", type=int, default=15)  # 攻击者数量
+    parser.add_argument("--num_malicious", type=int, default=15)  # 攻击者数量
+    parser.add_argument("--num_benign", type=int, default=35)  # 攻击者数量
     parser.add_argument("--num_test_data", type=int, default=5000)  # 测试集数量
     parser.add_argument("--num_val_data", type=int, default=5000)  # 验证集数量
     parser.add_argument("--dataloc", type=str, default="/home/cluster/")
@@ -104,7 +105,8 @@ def init_args():
         args.dataset
     ]
     args.epoch = {"cifar10": 1200, "mnist": 500, "famnist": 500}[args.dataset]
-    args.batchsize = {"cifar10": 250, "mnist": 600, "famnist": 600}[args.dataset]
+    args.batchsize = {"cifar10": 250, "mnist": 512, "famnist": 512}[args.dataset]
+    args.num_benign = args.num_clients - args.num_malicious
     args.dataloc = args.dataloc + "data/" + args.dataset + "/"
 
     if args.agr == "fltrust":
@@ -128,26 +130,7 @@ def init_args():
 
 
 def init_data(args):
-    data_tensors_class = LabelDisSkewData(args)
-    # if not os.path.isfile(
-    #     f"./{args.dataset}_{args.num_clients}_{args.train_alpha}_dataset.pkl"
-    # ):
-    #     data_tensors_class = LabelDisSkewData(args)
-    #     pickle.dump(
-    #         data_tensors_class,
-    #         open(
-    #             f"./{args.dataset}_{args.num_clients}_{args.train_alpha}_dataset.pkl",
-    #             "wb",
-    #         ),
-    #     )
-    # else:
-    #     data_tensors_class = pickle.load(
-    #         open(
-    #             f"./{args.dataset}_{args.num_clients}_{args.train_alpha}_dataset.pkl",
-    #             "rb",
-    #         )
-    #     )
-    return data_tensors_class
+    return LabelDisSkewData(args)
 
 
 class LabelDisSkewData:
@@ -157,33 +140,6 @@ class LabelDisSkewData:
     te_label_tensor = 0
     user_tr_data_tensors = 0
     user_tr_label_tensors = 0
-
-    # def split_noniid(self, train_labels, alpha, n_clients):
-    #     train_idcs = np.arange(len(train_labels))
-    #     n_classes = train_labels.max() + 1
-    #
-    #     label_distribution = np.random.dirichlet(
-    #         [alpha] * n_clients, n_classes
-    #     )  # (数据集类别数，客户端数) 行向量是类K在每个客户端上的概率分布向量
-    #
-    #     class_idcs = [
-    #         np.argwhere(train_labels[train_idcs] == y).flatten()
-    #         for y in range(n_classes)
-    #     ]  # 分离数据中的每个类别,每个元素是类别K的数据的idx
-    #
-    #     client_idcs = [[] for _ in range(n_clients)]  # （客户端数，类别数）
-    #
-    #     for c, fracs in zip(
-    #         class_idcs, label_distribution
-    #     ):  # 循环k次(类别数),c是label为k的样本的idx,fracs是类k的概率分布向量
-    #         for i, idcs in enumerate(
-    #             np.split(c, (np.cumsum(fracs)[:-1] * len(c)).astype(int))
-    #         ):  # 循环i次(客户端数),cumsum是元素累加(类k在第1个客户端的概率，前2个的概率...), idcs是第k个类在第i个客户端的idx
-    #             client_idcs[i] += [idcs]  # 把类k的数据的idx(max=10000)分到n个客户端中
-    #
-    #     client_idcs = [train_idcs[np.concatenate(idcs)] for idcs in client_idcs]
-    #
-    #     return client_idcs  # (10),内容是客户端的样本在所有样本中的idx
 
     def split_noniid2(self, n_dis, train_labels, alpha, n_clients, client_data_num):
         n_classes = train_labels.max() + 1  # train_labels内的元素为[0,9],类数为10
@@ -215,14 +171,14 @@ class LabelDisSkewData:
             np.concatenate(idx) for idx in client_idx_list
         ]  # concatenate:数列合并
 
-        # return client_idx_list
-        return sum(
-            [
-                [client_idx_list[i] for i in range(j, n_clients, n_clients // n_dis)]
-                for j in range(n_clients // n_dis)
-            ],
-            [],
-        )  # 把客户端顺序打乱，eg:001122->012012
+        return client_idx_list
+        # return sum(
+        #     [
+        #         [client_idx_list[i] for i in range(j, n_clients, n_clients // n_dis)]
+        #         for j in range(n_clients // n_dis)
+        #     ],
+        #     [],
+        # )  # 把客户端顺序打乱，eg:001122->012012
 
     def data_dis_plt_show(self, plot, num_classes):
         plt.figure(figsize=(20, 3))
@@ -230,7 +186,7 @@ class LabelDisSkewData:
             plot,
             stacked=True,
             bins=np.arange(-0.5, num_classes + 0.5, 1),
-            label=["Client {}".format(i) for i in range(args.num_clients)],
+            label=["Client {}".format(i) for i in range(args.num_benign)],
         )
         mapp = [
             "airplane",
@@ -350,21 +306,21 @@ class LabelDisSkewData:
         # tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
         # print("Data statistics Val:\n \t %s", str(tmp))
 
-        noniid_data = np.delete(X, val_idcs, axis=0)
-        noniid_label = np.delete(Y, val_idcs, axis=0)
+        X = np.delete(X, val_idcs, axis=0)
+        Y = np.delete(Y, val_idcs, axis=0)
 
         client_idcs = self.split_noniid2(
             args.num_dis,
-            noniid_label,
+            Y,
             args.train_alpha,
-            args.num_clients,
-            len(noniid_label) // (args.num_clients - args.num_attackers),
+            args.num_benign,
+            len(Y) // args.num_benign,
         )
         # # 统计每一类别的个数
         # net_cls_counts = {}
         # for net_i, dataidx in enumerate(client_idcs):
         #     unq, unq_cnt = np.unique(
-        #         noniid_label[dataidx], return_counts=True
+        #         Y[dataidx], return_counts=True
         #     )  # 去除重复元素，得到类名和该类元素数量
         #     tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
         #     net_cls_counts[net_i] = tmp
@@ -372,17 +328,17 @@ class LabelDisSkewData:
         # for _ in range(len(net_cls_counts)):
         #     print(str(net_cls_counts[_]))
         # self.data_dis_plt_show(
-        #     [noniid_label[idc] for idc in client_idcs], args.num_classes
+        #     [Y[idc] for idc in client_idcs], args.num_classes
         # )
 
         user_tr_data_tensors = []
         user_tr_label_tensors = []
         for client_data_idx in client_idcs:
             user_tr_data_tensors.append(
-                torch.from_numpy(noniid_data[client_data_idx]).type(torch.FloatTensor)
+                torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
             )
             user_tr_label_tensors.append(
-                torch.from_numpy(noniid_label[client_data_idx]).type(torch.LongTensor)
+                torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
             )
 
         self.val_data_tensor = val_data_tensor
@@ -428,8 +384,8 @@ def cluster_test(updates, train_tools):
         te_los, te_acc = test(
             te_data_tensor, te_label_tensor, clients_model, criterion, use_cuda
         )
-        true_los_list.append(te_los.cpu())
-        true_acc_list.append(te_acc.cpu())
+        true_los_list.append(te_los)
+        true_acc_list.append(te_acc)
     return [true_los_list, true_acc_list]
 
 
@@ -563,14 +519,7 @@ def abcd_min_los(mal_updates, train_tools, gap, linkage_method):
         grads_list.append(torch.mean(mal_updates[other_indices], dim=0))
     true_los_list, _ = cluster_test(grads_list, train_tools)
     good_cluster = np.argsort(np.array(true_los_list))[0]
-    # if len(mal_updates) == 30:
-    #     n_attacker = 10
-    # elif len(mal_updates) == 50:
-    #     n_attacker = 15
-    # with open(args.PATH_txt + f'nat{n_attacker}' + '.txt', 'a') as txt:
-    #     print(leaf_list, file=txt)
-    #     print(good_cluster, file=txt)
-    #     print(true_los_list, file=txt)
+
     print(leaf_list)
     print(good_cluster)
     print(true_los_list)
@@ -590,12 +539,12 @@ def abcd_min_los(mal_updates, train_tools, gap, linkage_method):
     # good_idx = sum([list(i) for i in np.array(leaf_list)[np.setdiff1d(np.arange(len(leaf_list)), bad_idx)]], [])
     # good_agr_grads = mal_updates[good_idx]
     #
-    # # good_agr_grads = mal_updates[n_attacker:]
+    # # good_agr_grads = mal_updates[args.num_malicious:]
     # if len(mal_updates) == 30:
-    #     n_attacker = 10
+    #     args.num_malicious = 10
     # elif len(mal_updates) == 50:
-    #     n_attacker = 15
-    # i = set(np.arange(n_attacker))
+    #     args.num_malicious = 15
+    # i = set(np.arange(args.num_malicious))
     # right_list = []
     # other_indices = list(set(cluster_label) - i)
     # right_list.append(torch.mean(mal_updates[list(i)], dim=0))  # 选择
@@ -607,7 +556,7 @@ def abcd_min_los(mal_updates, train_tools, gap, linkage_method):
     # right_los_list = right_los_list[:2]
     # right_los_list = np.array([right_los_list[i] - right_los_list[i + 1] for i in range(0, len(right_los_list), 2)])
     #
-    # with open(args.PATH_txt + f'nat{n_attacker}' + '.txt', 'a') as txt:
+    # with open(args.PATH_txt + f'nat{args.num_malicious}' + '.txt', 'a') as txt:
     #     print(f'cluster loss dif {true_los_list[bad_idx]:.5f} right loss dif {right_los_list[0]:.5f} cluster loss {cluster_los:.5f} right loss {right_los:.5f}', file=txt)
     # print(f'cluster loss dif {true_los_list[bad_idx]:.5f} right loss dif {right_los_list[0]:.5f} cluster loss {cluster_los:.5f} right loss {right_los:.5f}')
     #
@@ -630,19 +579,18 @@ def full_knowledge_attack(args, datatensors):
     nbatches = user_tr_len // args.batchsize
     fed_lr = args.lr
     criterion = nn.CrossEntropyLoss().to(device)
-    n_attacker = args.num_attackers
     if args.save:
-        with open(args.PATH_txt + f"nat{n_attacker}" + ".txt", "a") as txt:
+        with open(args.PATH_txt + f"nat{args.num_malicious}" + ".txt", "a") as txt:
             if args.at_agr == "cluster":
                 print(f"gap {args.gap}", file=txt)
             print(
-                f"alpha {args.train_alpha} n_clients {args.num_clients} nat {n_attacker} at {args.at_type} at_agr {args.at_agr} agr {args.agr}",
+                f"alpha {args.train_alpha} n_clients {args.num_clients} nat {args.num_malicious} at {args.at_type} at_agr {args.at_agr} agr {args.agr}",
                 file=txt,
             )
     if args.at_agr == "cluster":
         print(f"gap {args.gap}")
     print(
-        f"dataset {args.dataset} alpha {args.train_alpha} n_clients {args.num_clients} nat {n_attacker} at {args.at_type} at_agr {args.at_agr} agr {args.agr}"
+        f"dataset {args.dataset} alpha {args.train_alpha} n_clients {args.num_clients} nat {args.num_malicious} at {args.at_type} at_agr {args.at_agr} agr {args.agr}"
     )
 
     epoch_num = 0
@@ -653,7 +601,7 @@ def full_knowledge_attack(args, datatensors):
     if args.dataset == "cifar10":
         # fed_model = ResNet18()
         # fed_model = DenseNet()
-        fed_model, _ = return_model("alexnet", 0.1, 0.9, parallel=False)
+        fed_model, _ = return_model("vgg", 0.1, 0.9, parallel=False)
     # fed_model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     # fed_model.fc = nn.Linear(fed_model.fc.in_features, args.num_classes)
     elif args.dataset == "famnist":
@@ -670,24 +618,15 @@ def full_knowledge_attack(args, datatensors):
     elif args.optimizer == "Adam":
         optimizer_fed = Adam(fed_model.parameters(), lr=fed_lr)
 
-    # client_shuffle_idcs = [[] for _ in range(args.num_clients)]
-
     acc_point, los_point = [], []
     while epoch_num <= args.epoch:
         user_grads = []
         if not epoch_num and epoch_num % nbatches == 0:
             np.random.shuffle(r)
-            for i in range(args.num_clients):
+            for i in range(len(tr_data_tensors)):
                 tr_data_tensors[i] = tr_data_tensors[i][r]
                 tr_label_tensors[i] = tr_label_tensors[i][r]
-        for i in range(args.num_clients - n_attacker):  # 和partial不同
-            # nbatches = (len(tr_data_tensors[i]) // args.batchsize)  # 每个客户端一轮要训练几次，向下取整
-            # if epoch_num % nbatches == 0:  # 如果该客户端所有数据都训练完了就打乱再训练
-            #     r = np.arange(len(tr_data_tensors[i]))
-            #     np.random.shuffle(r)
-            #     client_shuffle_idcs[i] = (client_shuffle_idcs[i][r] if len(client_shuffle_idcs[i]) else r)
-            #     tr_data_tensors[i] = tr_data_tensors[i][r]
-            #     tr_label_tensors[i] = tr_label_tensors[i][r]
+        for i in range(args.num_benign):  # 和partial不同
             inputs = tr_data_tensors[i][
                 (epoch_num % nbatches)
                 * args.batchsize : ((epoch_num % nbatches) + 1)
@@ -754,16 +693,18 @@ def full_knowledge_attack(args, datatensors):
             malicious_grads = user_grads
         else:
             if args.at_type == "rev":
-                malicious_grads = reverse_attack(benign_grads, agg_grads, n_attacker)
+                malicious_grads = reverse_attack(
+                    benign_grads, agg_grads, args.num_malicious
+                )
             elif args.at_type == "fang":
                 if args.at_agr == "mkrum" or args.at_agr == "krum":
                     multi_k = True if args.agr == "mkrum" else False
                     malicious_grads = get_malicious_updates_fang(
-                        benign_grads, agg_grads, n_attacker, multi_k
+                        benign_grads, agg_grads, args.num_malicious, multi_k
                     )
                 elif args.at_agr == "trmean":
                     malicious_grads = get_malicious_updates_fang_trmean(
-                        benign_grads, agg_grads, n_attacker
+                        benign_grads, agg_grads, args.num_malicious
                     )
             elif args.at_type == "adaptive":
                 if args.at_agr == "mkrum" or args.at_agr == "krum":
@@ -771,7 +712,7 @@ def full_knowledge_attack(args, datatensors):
                     malicious_grads = adaptive_attack_mkrum(
                         benign_grads,
                         agg_grads,
-                        n_attacker,
+                        args.num_malicious,
                         multi_k,
                         dev_type="std",
                     )
@@ -779,13 +720,12 @@ def full_knowledge_attack(args, datatensors):
                     malicious_grads = adaptive_attack_trmean(
                         benign_grads,
                         agg_grads,
-                        n_attacker,
-                        # args.num_clients,
+                        args.num_malicious,
                         dev_type="std",
                     )
 
             # for _ in range(
-            #     1, n_attacker - 1
+            #     1, args.num_malicious - 1
             # ):  # 自己加的，不知道如何在一定欧式距离内随机采样，于是计算了高斯噪声后加上
             #     distance = 1
             #     noise_prop = 0.0001
@@ -822,17 +762,16 @@ def full_knowledge_attack(args, datatensors):
         elif args.agr == "krum" or args.agr == "mkrum":
             multi_k = True if args.agr == "mkrum" else False
             agg_grads, krum_candidate = multi_krum(
-                malicious_grads, n_attacker, multi_k=multi_k
+                malicious_grads, args.num_malicious, multi_k=multi_k
             )
         elif args.agr == "trmean":
-            # agg_grads = tr_mean(malicious_grads, n_attacker / args.num_clients)
-            agg_grads = tr_mean(malicious_grads, n_attacker)
+            agg_grads = tr_mean(malicious_grads, args.num_malicious)
         elif args.agr == "foolsgold":
             agg_grads = foolsgold(malicious_grads)
         elif args.agr == "median":
             agg_grads = torch.median(malicious_grads, dim=0)[0]
         elif args.agr == "bulyan":
-            agg_grads, krum_candidate = bulyan(malicious_grads, n_attacker)
+            agg_grads, krum_candidate = bulyan(malicious_grads, args.num_malicious)
 
         del user_grads
 
@@ -855,25 +794,27 @@ def full_knowledge_attack(args, datatensors):
         test_loss, test_acc = test(
             test_data_tensor, test_label_tensor, fed_model, criterion, use_cuda
         )  # 用更新的模型测试
-        test_loss = test_loss.cpu()
-        test_acc = test_acc.cpu()
         if epoch_num % save_epoch_num == 0 or epoch_num == args.epoch - 1:
             if math.isnan(test_loss):  # mark loss 还是testloss
                 if args.save:
-                    with open(args.PATH_txt + f"nat{n_attacker}" + ".txt", "a") as txt:
+                    with open(
+                        args.PATH_txt + f"nat{args.num_malicious}" + ".txt", "a"
+                    ) as txt:
                         print("loss nan", file=txt)
                 print("loss nan")
                 exit()
-            best_global_acc = max(best_global_acc, test_acc.cpu())
+            best_global_acc = max(best_global_acc, test_acc)
             if args.save:
-                with open(args.PATH_txt + f"nat{n_attacker}" + ".txt", "a") as txt:
+                with open(
+                    args.PATH_txt + f"nat{args.num_malicious}" + ".txt", "a"
+                ) as txt:
                     print(
                         "%s-%s: %s n_at %d epoch %d test loss %.4f test acc %.4f"
                         % (
                             args.at_type,
                             args.at_agr,
                             args.agr,
-                            n_attacker,
+                            args.num_malicious,
                             epoch_num,
                             test_loss,
                             test_acc,
@@ -886,7 +827,7 @@ def full_knowledge_attack(args, datatensors):
                     args.at_type,
                     args.at_agr,
                     args.agr,
-                    n_attacker,
+                    args.num_malicious,
                     epoch_num,
                     test_loss,
                     test_acc,
@@ -913,7 +854,7 @@ def full_knowledge_attack(args, datatensors):
             plt.show()
 
             # if args.save:
-            #     PATH_tar = args.PATH + 'n_at' + str(n_attacker) + 'epoch' + str(epoch_num) + '.pth.tar'
+            #     PATH_tar = args.PATH + 'n_at' + str(args.num_malicious) + 'epoch' + str(epoch_num) + '.pth.tar'
             #     torch.save({
             #         'epoch': epoch_num,
             #         'state_dict': fed_model.state_dict(),

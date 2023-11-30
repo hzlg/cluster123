@@ -111,7 +111,7 @@ for i in range(nusers):
     user_tr_label_tensors.append(user_tr_label_tensor)
 
 
-batch_size = 512
+batch_size = 250
 nepochs = 1200
 
 nbatches = user_tr_len // batch_size
