@@ -2,4 +2,4 @@
 *sh
 data/
 result/
-*pyc
+.pyc

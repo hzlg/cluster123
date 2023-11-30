@@ -100,7 +100,7 @@ def parse_args():
 def init_args():
     args = parse_args()
     args.num_classes = {"cifar10": 10, "mnist": 10, "famnist": 10}[args.dataset]
-    args.lr = {"cifar10": 0.5, "mnist": 0.001, "famnist": 0.001}[args.dataset]
+    args.lr = {"cifar10": 0.01, "mnist": 0.001, "famnist": 0.001}[args.dataset]
     args.optimizer = {"cifar10": "SGD", "mnist": "Adam", "famnist": "Adam"}[
         args.dataset
     ]
@@ -129,7 +129,26 @@ def init_args():
     return args
 
 
-def init_data(args):
+def init_data():
+    # if not os.path.isfile(
+    #     f"./{args.dataset}_{args.num_benign}_{args.train_alpha}_dataset.pkl"
+    # ):
+    #     data_tensors_class = LabelDisSkewData(args)
+    #     pickle.dump(
+    #         data_tensors_class,
+    #         open(
+    #             f"./{args.dataset}_{args.num_benign}_{args.train_alpha}_dataset.pkl",
+    #             "wb",
+    #         ),
+    #     )
+    # else:
+    #     data_tensors_class = pickle.load(
+    #         open(
+    #             f"./{args.dataset}_{args.num_benign}_{args.train_alpha}_dataset.pkl",
+    #             "rb",
+    #         )
+    #     )
+    # return data_tensors_class
     return LabelDisSkewData(args)
 
 
@@ -278,68 +297,108 @@ class LabelDisSkewData:
         else:
             all_indices = pickle.load(open(f"./{args.dataset}_all_shuffle.pkl", "rb"))
         X, Y = X[all_indices], Y[all_indices]
-
-        iid_data = X
-        iid_label = Y
-        te_idcs = self.split_noniid2(1, iid_label, 1000, 1, args.num_test_data)[
-            0
-        ]  # 随机生成1个分布，分配5000个样本
-        te_data_tensor = torch.from_numpy(iid_data[te_idcs]).type(torch.FloatTensor)
-        te_label_tensor = torch.from_numpy(iid_label[te_idcs]).type(torch.LongTensor)
-        # # 统计每一类别的个数
-        # unq, unq_cnt = np.unique(
-        #     iid_label[te_idcs], return_counts=True
-        # )  # 去除重复元素，得到类名和该类元素数量
-        # tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        # print("Data statistics Test:\n \t %s", str(tmp))
-
-        X = np.delete(X, te_idcs, axis=0)
-        Y = np.delete(Y, te_idcs, axis=0)
-
-        val_idcs = self.split_noniid2(1, Y, args.val_alpha, 1, args.num_val_data)[
-            0
-        ]  # 随机生成1个分布，分配5000个样本
-        val_data_tensor = torch.from_numpy(X[val_idcs]).type(torch.FloatTensor)
-        val_label_tensor = torch.from_numpy(Y[val_idcs]).type(torch.LongTensor)
-        # # 统计每一类别的个数
-        # unq, unq_cnt = np.unique(Y[val_idcs], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
-        # tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        # print("Data statistics Val:\n \t %s", str(tmp))
-
-        X = np.delete(X, val_idcs, axis=0)
-        Y = np.delete(Y, val_idcs, axis=0)
-
-        client_idcs = self.split_noniid2(
-            args.num_dis,
-            Y,
-            args.train_alpha,
-            args.num_benign,
-            len(Y) // args.num_benign,
-        )
-        # # 统计每一类别的个数
-        # net_cls_counts = {}
-        # for net_i, dataidx in enumerate(client_idcs):
-        #     unq, unq_cnt = np.unique(
-        #         Y[dataidx], return_counts=True
-        #     )  # 去除重复元素，得到类名和该类元素数量
-        #     tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
-        #     net_cls_counts[net_i] = tmp
-        # print("Data statistics Train:\n \t", end="")
-        # for _ in range(len(net_cls_counts)):
-        #     print(str(net_cls_counts[_]))
-        # self.data_dis_plt_show(
-        #     [Y[idc] for idc in client_idcs], args.num_classes
-        # )
-
-        user_tr_data_tensors = []
-        user_tr_label_tensors = []
-        for client_data_idx in client_idcs:
-            user_tr_data_tensors.append(
-                torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
+        a = 1
+        if a == 1:  # 新数据划分，dirichlet
+            iid_data = X
+            iid_label = Y
+            te_idcs = self.split_noniid2(1, iid_label, 1000, 1, args.num_test_data)[
+                0
+            ]  # 随机生成1个分布，分配5000个样本
+            te_data_tensor = torch.from_numpy(iid_data[te_idcs]).type(torch.FloatTensor)
+            te_label_tensor = torch.from_numpy(iid_label[te_idcs]).type(
+                torch.LongTensor
             )
-            user_tr_label_tensors.append(
-                torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
+            # # 统计每一类别的个数
+            # unq, unq_cnt = np.unique(
+            #     iid_label[te_idcs], return_counts=True
+            # )  # 去除重复元素，得到类名和该类元素数量
+            # tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+            # print("Data statistics Test:\n \t %s", str(tmp))
+
+            X = np.delete(X, te_idcs, axis=0)
+            Y = np.delete(Y, te_idcs, axis=0)
+
+            val_idcs = self.split_noniid2(1, Y, args.val_alpha, 1, args.num_val_data)[
+                0
+            ]  # 随机生成1个分布，分配5000个样本
+            val_data_tensor = torch.from_numpy(X[val_idcs]).type(torch.FloatTensor)
+            val_label_tensor = torch.from_numpy(Y[val_idcs]).type(torch.LongTensor)
+            # # 统计每一类别的个数
+            # unq, unq_cnt = np.unique(Y[val_idcs], return_counts=True)  # 去除重复元素，得到类名和该类元素数量
+            # tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+            # print("Data statistics Val:\n \t %s", str(tmp))
+
+            X = np.delete(X, val_idcs, axis=0)
+            Y = np.delete(Y, val_idcs, axis=0)
+
+            client_idcs = self.split_noniid2(
+                args.num_dis,
+                Y,
+                args.train_alpha,
+                args.num_benign,
+                len(Y) // args.num_benign,
             )
+            # # 统计每一类别的个数
+            # net_cls_counts = {}
+            # for net_i, dataidx in enumerate(client_idcs):
+            #     unq, unq_cnt = np.unique(
+            #         Y[dataidx], return_counts=True
+            #     )  # 去除重复元素，得到类名和该类元素数量
+            #     tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}  # 改为字典形式
+            #     net_cls_counts[net_i] = tmp
+            # print("Data statistics Train:\n \t", end="")
+            # for _ in range(len(net_cls_counts)):
+            #     print(str(net_cls_counts[_]))
+            # self.data_dis_plt_show(
+            #     [Y[idc] for idc in client_idcs], args.num_classes
+            # )
+
+            user_tr_data_tensors = []
+            user_tr_label_tensors = []
+            for client_data_idx in client_idcs:
+                user_tr_data_tensors.append(
+                    torch.from_numpy(X[client_data_idx]).type(torch.FloatTensor)
+                )
+                user_tr_label_tensors.append(
+                    torch.from_numpy(Y[client_data_idx]).type(torch.LongTensor)
+                )
+        else:  # 原本的数据划分shuffle
+            nusers = 35
+            user_tr_len = 50000 // 35
+            total_tr_len = 50000
+            val_len = 5000
+            te_len = 5000
+
+            print("total data len: ", len(X))
+
+            total_tr_data = X[:total_tr_len]
+            total_tr_label = Y[:total_tr_len]
+
+            val_data = X[total_tr_len : (total_tr_len + val_len)]
+            val_label = Y[total_tr_len : (total_tr_len + val_len)]
+
+            te_data = X[(total_tr_len + val_len) : (total_tr_len + val_len + te_len)]
+            te_label = Y[(total_tr_len + val_len) : (total_tr_len + val_len + te_len)]
+
+            val_data_tensor = torch.from_numpy(val_data).type(torch.FloatTensor)
+            val_label_tensor = torch.from_numpy(val_label).type(torch.LongTensor)
+
+            te_data_tensor = torch.from_numpy(te_data).type(torch.FloatTensor)
+            te_label_tensor = torch.from_numpy(te_label).type(torch.LongTensor)
+
+            user_tr_data_tensors = []
+            user_tr_label_tensors = []
+
+            for i in range(nusers):
+                user_tr_data_tensor = torch.from_numpy(
+                    total_tr_data[user_tr_len * i : user_tr_len * (i + 1)]
+                ).type(torch.FloatTensor)
+                user_tr_label_tensor = torch.from_numpy(
+                    total_tr_label[user_tr_len * i : user_tr_len * (i + 1)]
+                ).type(torch.LongTensor)
+
+                user_tr_data_tensors.append(user_tr_data_tensor)
+                user_tr_label_tensors.append(user_tr_label_tensor)
 
         self.val_data_tensor = val_data_tensor
         self.val_label_tensor = val_label_tensor
@@ -520,9 +579,9 @@ def abcd_min_los(mal_updates, train_tools, gap, linkage_method):
     true_los_list, _ = cluster_test(grads_list, train_tools)
     good_cluster = np.argsort(np.array(true_los_list))[0]
 
-    print(leaf_list)
-    print(good_cluster)
-    print(true_los_list)
+    # print(leaf_list)
+    # print(good_cluster)
+    # print(true_los_list)
     return grads_list[good_cluster]
 
     # 选择1个后去掉最坏的
@@ -599,11 +658,18 @@ def full_knowledge_attack(args, datatensors):
     r = np.arange(user_tr_len)
 
     if args.dataset == "cifar10":
-        # fed_model = ResNet18()
+        fed_model = ResNet18()
         # fed_model = DenseNet()
-        fed_model, _ = return_model("vgg", 0.1, 0.9, parallel=False)
-    # fed_model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
-    # fed_model.fc = nn.Linear(fed_model.fc.in_features, args.num_classes)
+        # fed_model, _ = return_model("alexnet", 0.1, 0.9, parallel=False)  # 不要再用alexnet了，会疯狂波动
+        # fed_model.conv1 = nn.Conv2d(
+        #     in_channels=3,
+        #     out_channels=64,
+        #     kernel_size=3,
+        #     stride=1,
+        #     padding=1,
+        #     bias=False,
+        # )
+        # fed_model.fc = nn.Linear(fed_model.fc.in_features, args.num_classes)
     elif args.dataset == "famnist":
         fed_model = mnist_conv()
         fed_model.apply(weights_init)
@@ -723,6 +789,14 @@ def full_knowledge_attack(args, datatensors):
                         args.num_malicious,
                         dev_type="std",
                     )
+            elif args.at_type == "min_max":
+                malicious_grads = adaptive_min_max(
+                    benign_grads, agg_grads, args.num_malicious
+                )
+            elif args.at_type == "min_sum":
+                malicious_grads = adaptive_min_sum(
+                    benign_grads, agg_grads, args.num_malicious
+                )
 
             # for _ in range(
             #     1, args.num_malicious - 1
@@ -867,12 +941,12 @@ def full_knowledge_attack(args, datatensors):
             #         'torch_rng_state': torch.get_rng_state(),
             #         'best_acc': best_global_acc
             #     }, PATH_tar)
-        if test_loss > 10:
-            print("test loss %f too high" % test_loss)
-            break
+        # if test_loss > 10:
+        #     print("test loss %f too high" % test_loss)
+        #     break
         epoch_num += 1
 
 
 if __name__ == "__main__":
     args = init_args()
-    full_knowledge_attack(args, init_data(args))
+    full_knowledge_attack(args, LabelDisSkewData(args))
