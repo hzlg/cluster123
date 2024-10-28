@@ -104,7 +104,7 @@ def init_args():
     args.optimizer = {"cifar10": "SGD", "mnist": "Adam", "famnist": "Adam"}[
         args.dataset
     ]
-    args.epoch = {"cifar10": 1200, "mnist": 500, "famnist": 500}[args.dataset]
+    args.epoch = {"cifar10": 1200, "mnist": 350, "famnist": 500}[args.dataset]
     args.batchsize = {"cifar10": 250, "mnist": 512, "famnist": 512}[args.dataset]
     args.num_benign = args.num_clients - args.num_malicious
     args.dataloc = args.dataloc + "data/" + args.dataset + "/"
